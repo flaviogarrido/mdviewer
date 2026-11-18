@@ -23,8 +23,9 @@ public sealed class ReversaProject
     public ReversaProject(
         string rootPath, string? version, string outputFolder, string forwardFolder,
         string? activeFeatureDir, FolderTree skills, int skillCount,
-        FolderTree flow, IReadOnlyList<string> flowDocuments)
+        FolderTree flow, IReadOnlyList<string> flowDocuments, ArchiveStatus? archive = null)
     {
+        Archive = archive ?? ArchiveStatus.None;
         RootPath = rootPath;
         Version = version;
         OutputFolder = outputFolder;
@@ -56,4 +57,11 @@ public sealed class ReversaProject
 
     /// <summary>Flow documents in display order: the basis of previous/next.</summary>
     public IReadOnlyList<string> FlowDocuments { get; }
+
+    /// <summary>Archive and restore availability (feature 011); <see cref="ArchiveStatus.None"/> until inspected.</summary>
+    public ArchiveStatus Archive { get; }
+
+    /// <summary>The same snapshot with another <see cref="Archive"/> status.</summary>
+    public ReversaProject WithArchive(ArchiveStatus archive) =>
+        new(RootPath, Version, OutputFolder, ForwardFolder, ActiveFeatureDir, Skills, SkillCount, Flow, FlowDocuments, archive);
 }

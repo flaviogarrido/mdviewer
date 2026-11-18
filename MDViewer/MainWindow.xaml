@@ -197,6 +197,26 @@
                                          ToolTip="Reversa documents in software engineering order"/>
                         </StackPanel>
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <!-- Reversa actions (feature 011), only for Reversa folders.
+                                 Same pattern as the Theme button: the click opens the menu. -->
+                            <Button Style="{StaticResource ToolbarButton}" MinWidth="28" Height="26" Padding="4,0"
+                                    Click="ReversaActionsButton_Click" x:Name="ReversaActionsButton"
+                                    Visibility="Collapsed" ToolTip="Reversa actions"
+                                    AutomationProperties.Name="Reversa actions">
+                                <TextBlock Text="⋯" FontSize="13"/>
+                                <Button.ContextMenu>
+                                    <ContextMenu x:Name="ReversaMenu">
+                                        <MenuItem Header="_Archive extraction…" x:Name="ArchiveExtractionItem"
+                                                  AutomationProperties.Name="Archive extraction"
+                                                  ToolTipService.ShowOnDisabled="True"
+                                                  Click="ArchiveExtraction_Click"/>
+                                        <MenuItem Header="_Restore extraction…" x:Name="RestoreExtractionItem"
+                                                  AutomationProperties.Name="Restore extraction"
+                                                  ToolTipService.ShowOnDisabled="True"
+                                                  Click="RestoreExtraction_Click"/>
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                            </Button>
                             <Button Style="{StaticResource ToolbarButton}" MinWidth="28" Height="26" Padding="4,0"
                                     Click="RefreshTree_Click" ToolTip="Refresh folder (F5)">
                                 <TextBlock Text="⟳" FontSize="13"/>

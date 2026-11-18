@@ -97,6 +97,22 @@ public sealed class ReversaProjectServiceTests : IDisposable
         Assert.Equal(before, _tmp.Snapshot());
     }
 
+    [Fact]
+    public void Archived_extractions_never_enter_the_flow()
+    {
+        // RN-09 / D-19 (feature 011): the Flow only reads the current extraction.
+        State();
+        _tmp.File("_reversa_sdd/inventory.md");
+        _tmp.File("_reversa_archive/20261118-140312/_reversa_sdd/domain.md");
+        _tmp.File("_reversa_archive/20261118-140312/_reversa_forward/001-a/requirements.md");
+
+        var project = ReversaProjectService.Detect(_tmp.Root)!;
+
+        Assert.Contains(_tmp.PathOf("_reversa_sdd/inventory.md"), project.FlowDocuments);
+        Assert.DoesNotContain(project.FlowDocuments,
+            d => d.Contains("_reversa_archive", StringComparison.OrdinalIgnoreCase));
+    }
+
     #endregion
 
     #region Skill header

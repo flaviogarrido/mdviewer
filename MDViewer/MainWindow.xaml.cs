@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -35,6 +36,9 @@ public partial class MainWindow : Window
     private bool _treeOnLeft;
     private string? _placeholderMarkdown;
 
+    // An archive or restore is running (feature 011): one at a time.
+    private bool _archiveOperationRunning;
+
     private const double TreeMinWidth = 150;
     private const double ViewerMinWidth = 300;
 
@@ -46,6 +50,8 @@ public partial class MainWindow : Window
         "# No file selected\n\n" +
         "The document that was open has been deleted, renamed or moved.\n\n" +
         "Choose a file in the tree.";
+
+    private const string ChooseFileMarkdown = "# No file selected\n\nChoose a file in the tree.";
 
     // Virtual host used to resolve relative resource paths (e.g. images)
     // referenced by the currently open document.
@@ -761,9 +767,10 @@ public partial class MainWindow : Window
     // this region only mirrors them on the badge, the view selector and the
     // Prev/Next buttons.
 
-    /// <summary>Shows or hides the badge and the view selector.</summary>
+    /// <summary>Shows or hides the badge, the view selector and the "⋯" Reversa actions.</summary>
     private void UpdateReversaBadge()
     {
+        UpdateReversaActions();
         if (_folder.Reversa is not { } project)
         {
             ReversaBadge.Visibility = Visibility.Collapsed;
@@ -864,6 +871,262 @@ public partial class MainWindow : Window
 
         PushHistory();
         await OpenMarkdownFile(target);
+    }
+
+    #endregion
+
+    #region Reversa archive
+
+    // Feature 011: "Archive extraction" and "Restore extraction". All disk
+    // writes are in ReversaArchiveService; this region asks, releases the
+    // open document, runs the service off the UI thread and applies the result.
+
+    /// <summary>"⋯" visible only in Reversa folders; each item enabled by the last scan (RF-01, D-13, D-18).</summary>
+    private void UpdateReversaActions()
+    {
+        if (_folder.Reversa is not { } project)
+        {
+            ReversaActionsButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        ReversaActionsButton.Visibility = Visibility.Visible;
+        ReversaActionsButton.IsEnabled = !_archiveOperationRunning;
+
+        var status = project.Archive;
+        ArchiveExtractionItem.IsEnabled = status.CanArchive;
+        ArchiveExtractionItem.ToolTip = status.CanArchive
+            ? $"Move the current extraction to {ReversaArchiveService.ArchiveFolderName}/"
+            : "No extraction to archive";
+        RestoreExtractionItem.IsEnabled = status.ArchiveCount > 0;
+        RestoreExtractionItem.ToolTip = status.ArchiveCount == 0
+            ? "No archived extraction"
+            : status.ValidArchiveCount == 1 ? "1 archive can be restored" : $"{status.ValidArchiveCount} archives can be restored";
+    }
+
+    private void ReversaActionsButton_Click(object sender, RoutedEventArgs e)
+    {
+        UpdateReversaActions();
+        ReversaMenu.PlacementTarget = ReversaActionsButton;
+        ReversaMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        ReversaMenu.IsOpen = true;
+    }
+
+    private async void ArchiveExtraction_Click(object sender, RoutedEventArgs e)
+    {
+        if (_archiveOperationRunning || _folder.Reversa == null || _folder.RootFolder is not { } root) return;
+
+        ArchivePlan plan;
+        try
+        {
+            var now = DateTime.Now;
+            plan = await Task.Run(() => ReversaArchiveService.PlanArchive(root, now));
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Cannot archive: {ex.Message}", "MDViewer - Error",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        if (plan.Error != null)
+        {
+            MessageBox.Show(this, plan.Error, "MDViewer — Archive extraction", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        if (!plan.HasExtraction)
+        {
+            MessageBox.Show(this, "No extraction to archive.", "MDViewer — Archive extraction",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        // OK/Cancel with Cancel as default: Enter and Esc both cancel (D-14).
+        var answer = MessageBox.Show(this, BuildArchiveConfirmation(root, plan), "MDViewer — Archive extraction",
+            MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+        if (answer != MessageBoxResult.OK)
+        {
+            StatusLabel.Text = "Archiving cancelled";
+            return;
+        }
+
+        var previousFile = ReleaseDocumentForMove("Archiving…");
+        ArchiveOutcome outcome;
+        try
+        {
+            outcome = await Task.Run(() => ReversaArchiveService.Archive(root, DateTime.Now));
+        }
+        catch (Exception ex)
+        {
+            outcome = ArchiveOutcome.Failed($"Archiving failed: {ex.Message}");
+        }
+        await ApplyMoveOutcome(root, outcome, previousFile, archived: true);
+    }
+
+    private async void RestoreExtraction_Click(object sender, RoutedEventArgs e)
+    {
+        if (_archiveOperationRunning || _folder.Reversa == null || _folder.RootFolder is not { } root) return;
+
+        IReadOnlyList<ArchiveEntry> archives;
+        try
+        {
+            archives = await Task.Run(() => ReversaArchiveService.ListArchives(root));
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Cannot read {ReversaArchiveService.ArchiveFolderName}:\n{ex.Message}",
+                "MDViewer - Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        var window = new RestoreArchiveWindow(root, archives) { Owner = this };
+        if (window.ShowDialog() != true || window.SelectedArchive is not { } chosen)
+        {
+            StatusLabel.Text = "Restore cancelled";
+            return;
+        }
+
+        var previousFile = ReleaseDocumentForMove("Restoring…");
+        ArchiveOutcome outcome;
+        try
+        {
+            outcome = await Task.Run(() => ReversaArchiveService.Restore(root, chosen.FullPath, DateTime.Now));
+        }
+        catch (Exception ex)
+        {
+            outcome = ArchiveOutcome.Failed($"Restoring failed: {ex.Message}");
+        }
+        await ApplyMoveOutcome(root, outcome, previousFile, archived: false);
+    }
+
+    /// <summary>RN-06: what moves, how many files, where to, and the effect on the next /reversa.</summary>
+    private static string BuildArchiveConfirmation(string root, ArchivePlan plan)
+    {
+        var text = new StringBuilder("Archive the current extraction?\n\n");
+        if (plan.Items.Count == 0)
+        {
+            text.AppendLine(ArchiveText.NoFoldersToMove);
+            text.AppendLine($"Destination: {plan.Destination}");
+        }
+        else
+        {
+            text.AppendLine($"These items move to {plan.Destination} ({ArchiveText.Files(plan.FileCount)}):");
+            text.Append(ArchiveText.ItemLines(root, plan.Items));
+        }
+        if (plan.IsUnfinished)
+            text.AppendLine().AppendLine(ArchiveText.NotFinished);
+        text.AppendLine();
+        text.Append("Nothing is deleted. The extraction progress in .reversa/state.json is reset, " +
+                    "so the next /reversa starts a new extraction from scratch.");
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// Before moving: drops the file watcher and debounce timer (they hold the
+    /// document's folder), disables "⋯" and shows the operation placeholder
+    /// (D-16). Returns the document that was open.
+    /// </summary>
+    private string? ReleaseDocumentForMove(string placeholder)
+    {
+        var previousFile = _currentFilePath;
+        _archiveOperationRunning = true;
+        ReversaActionsButton.IsEnabled = false;
+
+        ShowPlaceholder($"# {placeholder}\n\nPlease wait.");
+        try { WebView.CoreWebView2?.ClearVirtualHostNameToFolderMapping(DocumentVirtualHost); }
+        catch { /* not mapped yet */ }
+        StatusLabel.Text = placeholder;
+        return previousFile;
+    }
+
+    /// <summary>
+    /// After the service ran (D-16, D-17). Success, in this order: remap the
+    /// history, reload the tree (like F5), reopen the document at its new
+    /// path, then status bar and message. Failure: reload, reopen the original
+    /// document and show the error (with any stranded items).
+    /// </summary>
+    private async Task ApplyMoveOutcome(string root, ArchiveOutcome outcome, string? previousFile, bool archived)
+    {
+        try
+        {
+            // Another folder was opened meanwhile: only report.
+            var sameRoot = string.Equals(_folder.RootFolder, root, StringComparison.OrdinalIgnoreCase);
+
+            if (outcome.Success)
+            {
+                if (sameRoot)
+                {
+                    _history.Remap(p => ReversaArchiveService.MapPath(outcome.PathMap, p));
+                    BackButton.IsEnabled = _history.CanGoBack;
+                    await RefreshFolderTree();
+                    await ReopenAfterMove(previousFile != null
+                        ? ReversaArchiveService.MapPath(outcome.PathMap, previousFile)
+                        : null);
+                }
+                StatusLabel.Text = archived ? "Extraction archived" : "Extraction restored";
+                MessageBox.Show(this, BuildOutcomeText(root, outcome, archived), "MDViewer",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else
+            {
+                if (sameRoot)
+                {
+                    await RefreshFolderTree();
+                    await ReopenAfterMove(previousFile);
+                }
+                StatusLabel.Text = archived ? "Archiving failed" : "Restoring failed";
+                MessageBox.Show(this, outcome.Error ?? "The operation failed.", "MDViewer - Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+        finally
+        {
+            _archiveOperationRunning = false;
+            UpdateReversaActions();
+        }
+    }
+
+    private async Task ReopenAfterMove(string? path)
+    {
+        if (path != null && File.Exists(path))
+            await OpenMarkdownFile(path);
+        else
+            ShowPlaceholder(ChooseFileMarkdown);
+    }
+
+    private static string BuildOutcomeText(string root, ArchiveOutcome outcome, bool archived)
+    {
+        static string Rel(string root, string path) =>
+            Path.GetRelativePath(root, path).Replace(Path.DirectorySeparatorChar, '/') + "/";
+
+        var text = new StringBuilder();
+        if (archived)
+        {
+            text.AppendLine("The extraction was archived to:");
+            text.AppendLine(outcome.ArchivePath != null ? Rel(root, outcome.ArchivePath) : "?");
+            text.AppendLine();
+            text.Append("The next /reversa starts a new extraction from scratch.");
+        }
+        else
+        {
+            text.AppendLine("The extraction was restored from:");
+            text.Append(outcome.ArchivePath != null ? Rel(root, outcome.ArchivePath) : "?");
+            if (outcome.PreviousArchivePath != null)
+            {
+                text.AppendLine().AppendLine();
+                text.AppendLine("The previous extraction was archived to:");
+                text.Append(Rel(root, outcome.PreviousArchivePath));
+            }
+        }
+
+        if (outcome.Warnings.Count > 0)
+        {
+            text.AppendLine().AppendLine();
+            text.AppendLine("Warnings:");
+            foreach (var warning in outcome.Warnings)
+                text.AppendLine($"• {warning}");
+        }
+        return text.ToString().TrimEnd();
     }
 
     #endregion

@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace MDViewer.ViewModels;
 
 /// <summary>
@@ -28,4 +30,23 @@ public sealed class NavigationHistory
     public string? GoBack() => _entries.TryPop(out var path) ? path : null;
 
     public void Clear() => _entries.Clear();
+
+    /// <summary>
+    /// Rewrites every entry with <paramref name="map"/>, keeping the order
+    /// (feature 011: documents moved by archiving or restoring). Entries mapped
+    /// to null, or to a file that does not exist, are dropped; two equal
+    /// entries in a row become one, as in <see cref="Push"/>.
+    /// </summary>
+    public void Remap(Func<string, string?> map)
+    {
+        // Stack enumeration is top first: rebuild from the bottom.
+        var oldestFirst = _entries.Reverse().ToList();
+        _entries.Clear();
+        foreach (var entry in oldestFirst)
+        {
+            var mapped = map(entry);
+            if (mapped != null && File.Exists(mapped))
+                Push(mapped);
+        }
+    }
 }

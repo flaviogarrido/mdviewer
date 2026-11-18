@@ -68,9 +68,17 @@ public sealed class FolderViewModel
         SyncSelection(null);
     }
 
-    /// <summary>Reads the folder tree and the Reversa install. Slow (disk I/O): call off the UI thread.</summary>
-    public static (FolderTree Tree, ReversaProject? Reversa) Scan(string root) =>
-        (FolderTreeService.Build(root), DetectReversa(root));
+    /// <summary>
+    /// Reads the folder tree, the Reversa install and its archive status
+    /// (feature 011). Slow (disk I/O): call off the UI thread. Only reads:
+    /// the archive commands live in <see cref="ReversaArchiveService"/>.
+    /// </summary>
+    public static (FolderTree Tree, ReversaProject? Reversa) Scan(string root)
+    {
+        var tree = FolderTreeService.Build(root);
+        var reversa = DetectReversa(root);
+        return (tree, reversa?.WithArchive(InspectArchive(reversa.RootPath)));
+    }
 
     /// <summary>
     /// Installs a <see cref="Scan"/> result of <paramref name="root"/>, keeping
@@ -260,6 +268,17 @@ public sealed class FolderViewModel
                                        or ArgumentException or NotSupportedException)
         {
             return null;
+        }
+    }
+
+    /// <summary>The archive menu never fails the folder scan: on error both commands are simply unavailable.</summary>
+    private static ArchiveStatus InspectArchive(string root)
+    {
+        try { return ReversaArchiveService.Inspect(root); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                       or ArgumentException or NotSupportedException)
+        {
+            return ArchiveStatus.None;
         }
     }
 

@@ -79,8 +79,9 @@ public static class ReversaProjectService
     /// <summary>
     /// A folder name from state.json is accepted only as a single path segment
     /// under the root: no separators, drive colon, "..", or invalid characters.
+    /// Also used by <see cref="ReversaArchiveService"/> (D-09).
     /// </summary>
-    private static string? ValidFolderName(string? name)
+    internal static string? ValidFolderName(string? name)
     {
         if (string.IsNullOrWhiteSpace(name) || name != name.Trim()) return null;
         if (name is "." or ".." || name.Contains("..")) return null;

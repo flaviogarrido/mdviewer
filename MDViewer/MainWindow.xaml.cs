@@ -771,6 +771,7 @@ public partial class MainWindow : Window
     private void UpdateReversaBadge()
     {
         UpdateReversaActions();
+        UpdateGuide();
         if (_folder.Reversa is not { } project)
         {
             ReversaBadge.Visibility = Visibility.Collapsed;
@@ -789,6 +790,76 @@ public partial class MainWindow : Window
         ReversaBadge.Visibility = Visibility.Visible;
         ViewSelector.Visibility = Visibility.Visible;
     }
+
+    #region Reversa guide
+
+    // "Where am I / next step" (feature 012): deduced by ReversaGuideService
+    // during the folder scan; this region shows it, copies a command to the
+    // clipboard and opens a skill document. Nothing is written or executed.
+
+    /// <summary>Shows the guide of the last scan; hidden outside Reversa folders (RF-02, RF-08).</summary>
+    private void UpdateGuide()
+    {
+        if (_folder.Reversa?.Guide is not { } guide)
+        {
+            GuidePanel.Visibility = Visibility.Collapsed;
+            GuideSuggestions.ItemsSource = null;
+            return;
+        }
+
+        GuideTitle.Text = guide.Title;
+        GuideDetail.Text = guide.Detail;
+        GuideSuggestions.ItemsSource = guide.Suggestions;
+        GuideSuggestions.Visibility = guide.Suggestions.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        var summary = guide.Primary is { } primary
+            ? $"{guide.Title}. {guide.Detail}. Next step: {primary.Command}"
+            : $"{guide.Title}. {guide.Detail}";
+        System.Windows.Automation.AutomationProperties.SetName(GuideTitle, summary);
+        GuidePanel.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>Copies exactly the command text; a busy clipboard only changes the status (RF-03, RF-11).</summary>
+    private void GuideCopy_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not GuideSuggestion suggestion) return;
+
+        try
+        {
+            Clipboard.SetDataObject(suggestion.Command, copy: true);
+            StatusLabel.Text = $"Copied {suggestion.Command}";
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            StatusLabel.Text = "Could not copy to the clipboard";
+        }
+    }
+
+    /// <summary>Opens the skill document of a suggested command, like a tree selection (RF-10).</summary>
+    private async void GuideCommand_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if ((sender as FrameworkElement)?.DataContext is not GuideSuggestion { SkillPath: { } path } suggestion) return;
+            if (!_webViewReady) return;
+            if (string.Equals(path, _currentFilePath, StringComparison.OrdinalIgnoreCase)) return;
+
+            if (!File.Exists(path))
+            {
+                StatusLabel.Text = $"{suggestion.Command} skill no longer exists — press F5 to refresh";
+                return;
+            }
+
+            PushHistory();
+            await OpenMarkdownFile(path);
+        }
+        catch (Exception ex)
+        {
+            StatusLabel.Text = $"Could not open the skill — {ex.Message}";
+        }
+    }
+
+    #endregion
 
     /// <summary>Checks the selector button of the current view.</summary>
     private void UpdateViewSelector()

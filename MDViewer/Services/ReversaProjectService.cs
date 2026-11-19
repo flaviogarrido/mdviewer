@@ -15,7 +15,7 @@ public static class ReversaProjectService
 {
     private const string DefaultOutputFolder = "_reversa_sdd";
     private const string DefaultForwardFolder = "_reversa_forward";
-    private const long MaxJsonBytes = 1024 * 1024;
+    internal const long MaxJsonBytes = 1024 * 1024;
     private const int MaxHeaderLines = 64;
     private const string PreferredEngine = ".claude";
 
@@ -44,20 +44,22 @@ public static class ReversaProjectService
         }
 
         var activeFeatureDir = ReadActiveFeatureDir(root, reversaDir, forwardFolder);
-        var (skills, skillCount) = BuildSkills(root);
+        var (skills, skillCount, skillFiles) = BuildSkills(root);
         var flow = new FlowBuilder(root, outputFolder, forwardFolder, activeFeatureDir).Build();
         var flowDocuments = flow.AllNodes()
             .Where(n => !n.IsDirectory)
             .Select(n => n.FullPath)
             .ToList();
 
+        var guide = ReversaGuideService.Build(root, outputFolder, activeFeatureDir, skillFiles);
+
         return new ReversaProject(root, version, outputFolder, forwardFolder, activeFeatureDir,
-            skills, skillCount, flow, flowDocuments);
+            skills, skillCount, flow, flowDocuments, guide: guide);
     }
 
     #region state.json / active-requirements.json
 
-    private static JsonDocument? ReadJson(string path)
+    internal static JsonDocument? ReadJson(string path)
     {
         try
         {
@@ -71,7 +73,7 @@ public static class ReversaProjectService
         }
     }
 
-    private static string? GetString(JsonElement obj, string property) =>
+    internal static string? GetString(JsonElement obj, string property) =>
         obj.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
@@ -190,9 +192,10 @@ public static class ReversaProjectService
     /// <summary>
     /// One entry per skill (<c>&lt;engine&gt;/skills/&lt;name&gt;/SKILL.md</c>,
     /// keyed by folder name), preferring the <c>.claude</c> copy, then the first
-    /// engine folder in ordinal order. Grouped by family.
+    /// engine folder in ordinal order. Grouped by family. <c>Files</c> maps
+    /// each skill folder name to its SKILL.md (feature 012).
     /// </summary>
-    private static (FolderTree Tree, int Count) BuildSkills(string root)
+    private static (FolderTree Tree, int Count, IReadOnlyDictionary<string, string> Files) BuildSkills(string root)
     {
         var chosen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var engines = FolderTreeService.EnumerateSorted(root, directories: true)
@@ -218,7 +221,7 @@ public static class ReversaProjectService
             {
                 IsGroup = true
             };
-            return (new FolderTree(root, new[] { none }, index), 0);
+            return (new FolderTree(root, new[] { none }, index), 0, new Dictionary<string, string>());
         }
 
         var families = SkillFamilies.Order.ToDictionary(
@@ -259,7 +262,9 @@ public static class ReversaProjectService
             .Select(f => families[f])
             .Where(f => f.Children.Count > 0)
             .ToList();
-        return (new FolderTree(root, nodes, index), skills.Count);
+        var files = chosen.ToDictionary(
+            kv => kv.Key, kv => Path.Combine(kv.Value, "SKILL.md"), StringComparer.OrdinalIgnoreCase);
+        return (new FolderTree(root, nodes, index), skills.Count, files);
     }
 
     /// <summary>The skill's other Markdown files, by relative path in natural order.</summary>

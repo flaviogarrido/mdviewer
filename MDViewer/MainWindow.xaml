@@ -33,6 +33,39 @@
             <Setter Property="FontSize" Value="13"/>
         </Style>
 
+        <!-- A Reversa command of the guide (feature 012): looks like a link
+             and opens the skill document. Disabled (skill not installed) it
+             stays readable, since the text is still what gets copied. -->
+        <Style x:Key="GuideCommandButton" TargetType="Button">
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="HorizontalAlignment" Value="Left"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="Transparent" BorderThickness="0,0,0,1"
+                                BorderBrush="Transparent">
+                            <TextBlock Text="{TemplateBinding Content}" TextTrimming="CharacterEllipsis"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{DynamicResource PrimaryText}"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Segmented view selector of Reversa folders (Files / Skills / Flow).
              Checked uses the badge colors (contrast checked in the themes). -->
         <Style x:Key="ViewToggle" TargetType="RadioButton">
@@ -195,6 +228,13 @@
                                          x:Name="ViewFlowButton" Checked="ViewToggle_Checked"
                                          AutomationProperties.Name="View: Flow"
                                          ToolTip="Reversa documents in software engineering order"/>
+                            <!-- Reversa map (feature 013): a page in the document area,
+                                 not a tree view, so it is a button and not a fourth toggle. -->
+                            <Button Style="{StaticResource ToolbarButton}" x:Name="MapButton"
+                                    MinWidth="0" Height="22" Padding="10,0" Margin="6,0,0,0" FontSize="12"
+                                    Content="Map" Click="Map_Click"
+                                    ToolTip="Reversa map: the scenarios, their commands and where this project stands"
+                                    AutomationProperties.Name="Reversa map"/>
                         </StackPanel>
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                             <!-- Reversa actions (feature 011), only for Reversa folders.
@@ -242,6 +282,46 @@
                     </DockPanel>
                 </Border>
 
+                <!-- Reversa guide (feature 012): where the project stands and the
+                     next command. Read-only: the only output is the clipboard. -->
+                <Border DockPanel.Dock="Bottom" x:Name="GuidePanel" Visibility="Collapsed"
+                        BorderBrush="{DynamicResource ChromeBorder}" BorderThickness="0,1,0,0" Padding="8,6">
+                    <StackPanel>
+                        <TextBlock x:Name="GuideTitle" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="GuideDetail" FontSize="11" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource SecondaryText}"/>
+                        <ItemsControl x:Name="GuideSuggestions" Margin="0,4,0,0" Focusable="False"
+                                      AutomationProperties.Name="Suggested Reversa commands">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <DockPanel Margin="0,3,0,0">
+                                        <Button DockPanel.Dock="Right" Style="{StaticResource ToolbarButton}"
+                                                MinWidth="0" Height="22" Padding="6,0" Margin="6,0,0,0" FontSize="11"
+                                                VerticalAlignment="Top" Content="Copy"
+                                                Click="GuideCopy_Click" ToolTip="{Binding CopyLabel}"
+                                                AutomationProperties.Name="{Binding CopyLabel}"/>
+                                        <StackPanel>
+                                            <Button Style="{StaticResource GuideCommandButton}" x:Name="CommandButton"
+                                                    Content="{Binding Command}" Click="GuideCommand_Click"
+                                                    IsEnabled="{Binding CanOpenSkill}"
+                                                    ToolTip="{Binding OpenToolTip}" ToolTipService.ShowOnDisabled="True"
+                                                    AutomationProperties.Name="{Binding Command}"
+                                                    AutomationProperties.HelpText="{Binding OpenToolTip}"/>
+                                            <TextBlock Text="{Binding Hint}" FontSize="11" TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource SecondaryText}"/>
+                                        </StackPanel>
+                                    </DockPanel>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding IsPrimary}" Value="True">
+                                            <Setter TargetName="CommandButton" Property="FontWeight" Value="Bold"/>
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
                 <TreeView x:Name="FolderTreeView" BorderThickness="0" Padding="2,4"
                           FontSize="13"
                           SelectedItemChanged="FolderTreeView_SelectedItemChanged">
@@ -252,6 +332,7 @@
                             <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}"/>
                             <Setter Property="ToolTip" Value="{Binding ToolTipText}"/>
                             <Setter Property="AutomationProperties.Name" Value="{Binding Name}"/>
+                            <Setter Property="AutomationProperties.HelpText" Value="{Binding ToolTipText}"/>
                             <Setter Property="Foreground" Value="{DynamicResource PrimaryText}"/>
                             <EventSetter Event="Selected" Handler="TreeViewItem_Selected"/>
                             <Style.Triggers>
@@ -260,7 +341,6 @@
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding IsPending}" Value="True">
                                     <Setter Property="Foreground" Value="{DynamicResource SecondaryText}"/>
-                                    <Setter Property="ToolTip" Value="No documents yet"/>
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>

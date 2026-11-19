@@ -28,6 +28,13 @@ public class MarkdownRenderService
         return ApplyTemplate(htmlContent, isDarkTheme, baseHref, flowFooter);
     }
 
+    /// <summary>
+    /// A page built by the app itself (the Reversa map), already HTML: only
+    /// the template is applied. Never pass document content here.
+    /// </summary>
+    public string RenderHtmlPage(string htmlContent, bool isDarkTheme) =>
+        ApplyTemplate(htmlContent, isDarkTheme, baseHref: null, flowFooter: null);
+
     private string ApplyTemplate(string htmlContent, bool isDarkTheme, string? baseHref,
         (string? PrevLabel, string? NextLabel)? flowFooter)
     {

@@ -36,6 +36,11 @@ public partial class MainWindow : Window
     private bool _treeOnLeft;
     private string? _placeholderMarkdown;
 
+    // The Reversa map (feature 013) is the page shown: like a placeholder, a
+    // page without a file. In the history it is this fixed entry.
+    private bool _mapShown;
+    private const string MapHistoryEntry = "reversa:map";
+
     // An archive or restore is running (feature 011): one at a time.
     private bool _archiveOperationRunning;
 
@@ -177,7 +182,7 @@ public partial class MainWindow : Window
 
                 // Only the parsing is guarded: a failure while navigating must
                 // surface, not be mistaken for a malformed message.
-                string? type = null, href = null, dir = null;
+                string? type = null, href = null, dir = null, name = null;
                 try
                 {
                     using var json = JsonDocument.Parse(message);
@@ -185,6 +190,7 @@ public partial class MainWindow : Window
                     type = ReadString(json.RootElement, "type");
                     href = ReadString(json.RootElement, "href");
                     dir = ReadString(json.RootElement, "dir");
+                    name = ReadString(json.RootElement, "name");
                 }
                 catch (JsonException) { return; /* Not JSON — ignore */ }
 
@@ -192,6 +198,8 @@ public partial class MainWindow : Window
                     await HandleLinkNavigation(href);
                 else if (type == "flow" && dir != null)
                     await HandleFlowMessage(dir);
+                else if (type is "skill" or "copy" && name != null)
+                    await HandleMapMessage(type, name);
             };
 
             WebView.CoreWebView2.NewWindowRequested += (_, args) =>
@@ -323,6 +331,7 @@ public partial class MainWindow : Window
 
             _currentFilePath = filePath;
             _placeholderMarkdown = null;
+            _mapShown = false;
             _folder.SyncSelection(filePath);
             if (_folder.RootFolder is { } root && IsUnderFolder(filePath, root))
                 SettingsService.LastFile = filePath;
@@ -543,12 +552,17 @@ public partial class MainWindow : Window
         if (_history.GoBack() is not { } previousFile) return;
 
         BackButton.IsEnabled = _history.CanGoBack;
+        if (previousFile == MapHistoryEntry)
+        {
+            if (!ShowMap()) StatusLabel.Text = "The Reversa map is no longer available";
+            return;
+        }
         await OpenMarkdownFile(previousFile);
     }
 
     private void PushHistory()
     {
-        _history.Push(_currentFilePath);
+        _history.Push(_mapShown ? MapHistoryEntry : _currentFilePath);
         BackButton.IsEnabled = _history.CanGoBack;
     }
 
@@ -672,6 +686,7 @@ public partial class MainWindow : Window
         UpdateViewSelector();
         UpdateFlowNavigation();
         StatusLabel.Text = "Ready";
+        await RefreshShownMap();
     }
 
     /// <summary>
@@ -741,6 +756,7 @@ public partial class MainWindow : Window
     private void ShowPlaceholder(string markdown)
     {
         _placeholderMarkdown = markdown;
+        _mapShown = false;
         _currentFilePath = null;
         _pendingScrollRatio = null;
         _fileWatcher?.Dispose();
@@ -771,6 +787,7 @@ public partial class MainWindow : Window
     private void UpdateReversaBadge()
     {
         UpdateReversaActions();
+        UpdateGuide();
         if (_folder.Reversa is not { } project)
         {
             ReversaBadge.Visibility = Visibility.Collapsed;
@@ -789,6 +806,167 @@ public partial class MainWindow : Window
         ReversaBadge.Visibility = Visibility.Visible;
         ViewSelector.Visibility = Visibility.Visible;
     }
+
+    #region Reversa guide
+
+    // "Where am I / next step" (feature 012): deduced by ReversaGuideService
+    // during the folder scan; this region shows it, copies a command to the
+    // clipboard and opens a skill document. Nothing is written or executed.
+
+    /// <summary>Shows the guide of the last scan; hidden outside Reversa folders (RF-02, RF-08).</summary>
+    private void UpdateGuide()
+    {
+        if (_folder.Reversa?.Guide is not { } guide)
+        {
+            GuidePanel.Visibility = Visibility.Collapsed;
+            GuideSuggestions.ItemsSource = null;
+            return;
+        }
+
+        GuideTitle.Text = guide.Title;
+        GuideDetail.Text = guide.Detail;
+        GuideSuggestions.ItemsSource = guide.Suggestions;
+        GuideSuggestions.Visibility = guide.Suggestions.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        var summary = guide.Primary is { } primary
+            ? $"{guide.Title}. {guide.Detail}. Next step: {primary.Command}"
+            : $"{guide.Title}. {guide.Detail}";
+        System.Windows.Automation.AutomationProperties.SetName(GuideTitle, summary);
+        GuidePanel.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>Copies exactly the command text; a busy clipboard only changes the status (RF-03, RF-11).</summary>
+    private void GuideCopy_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not GuideSuggestion suggestion) return;
+
+        CopyCommand(suggestion.Command);
+    }
+
+    private void CopyCommand(string command)
+    {
+        try
+        {
+            Clipboard.SetDataObject(command, copy: true);
+            StatusLabel.Text = $"Copied {command}";
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            StatusLabel.Text = "Could not copy to the clipboard";
+        }
+    }
+
+    /// <summary>Opens the skill document of a suggested command, like a tree selection (RF-10).</summary>
+    private async void GuideCommand_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if ((sender as FrameworkElement)?.DataContext is not GuideSuggestion { SkillPath: { } path } suggestion) return;
+            if (!_webViewReady) return;
+            if (string.Equals(path, _currentFilePath, StringComparison.OrdinalIgnoreCase)) return;
+
+            if (!File.Exists(path))
+            {
+                StatusLabel.Text = $"{suggestion.Command} skill no longer exists — press F5 to refresh";
+                return;
+            }
+
+            PushHistory();
+            await OpenMarkdownFile(path);
+        }
+        catch (Exception ex)
+        {
+            StatusLabel.Text = $"Could not open the skill — {ex.Message}";
+        }
+    }
+
+    #endregion
+
+    #region Reversa map
+
+    // The usage map (feature 013): built by ReversaMapService during the
+    // folder scan and shown in the document area as a page without a file.
+    // The page asks to open a skill or to copy a command; both are answered
+    // only while the map is shown and only for commands of the map.
+
+    private void Map_Click(object sender, RoutedEventArgs e)
+    {
+        if (_mapShown || !_webViewReady) return;
+
+        PushHistory();
+        if (!ShowMap()) StatusLabel.Text = "The Reversa map is not available";
+    }
+
+    /// <summary>Shows the map of the last scan; false outside Reversa folders.</summary>
+    private bool ShowMap(double? scrollRatio = null)
+    {
+        if (!_webViewReady || _folder.Reversa?.Map is not { } map) return false;
+
+        _mapShown = true;
+        _placeholderMarkdown = null;
+        _currentFilePath = null;
+        _pendingScrollRatio = scrollRatio;
+        _fileWatcher?.Dispose();
+        _fileWatcher = null;
+        _debounceTimer?.Dispose();
+        _debounceTimer = null;
+        _folder.SyncSelection(null);
+
+        Title = "Reversa map — MDViewer";
+        FileNameLabel.Text = "Reversa map";
+        StatusLabel.Text = "Reversa map";
+        UpdateFlowNavigation();
+
+        _renderComplete = false;
+        NavigateHost(_renderService.RenderHtmlPage(ReversaMapService.ToHtml(map), _themeService.IsDarkTheme));
+        return true;
+    }
+
+    /// <summary>
+    /// After a folder scan with the map shown: the map again, with the new
+    /// state and the same reading position, or "No file selected" when the
+    /// folder is no longer a Reversa folder (RF-09, RF-11).
+    /// </summary>
+    private async Task RefreshShownMap()
+    {
+        if (!_mapShown) return;
+
+        if (_folder.Reversa?.Map == null)
+        {
+            ShowPlaceholder(NoFileSelectedMarkdown);
+            return;
+        }
+
+        var ratio = _renderComplete ? await GetScrollRatioAsync() : null;
+        if (_mapShown) ShowMap(ratio);
+    }
+
+    /// <summary>
+    /// "skill" or "copy" from the page. The name only selects a step of the
+    /// map: the path opened and the text copied come from the model (RN-10).
+    /// </summary>
+    private async Task HandleMapMessage(string type, string name)
+    {
+        if (!_mapShown || _folder.Reversa?.Map?.Find(name) is not { } step) return;
+
+        if (type == "copy")
+        {
+            CopyCommand(step.Command);
+            return;
+        }
+
+        if (step.SkillPath is not { } path) return;
+        if (!File.Exists(path))
+        {
+            StatusLabel.Text = $"{step.Command} skill no longer exists — press F5 to refresh";
+            return;
+        }
+
+        PushHistory();
+        await OpenMarkdownFile(path);
+    }
+
+    #endregion
 
     /// <summary>Checks the selector button of the current view.</summary>
     private void UpdateViewSelector()
@@ -1264,6 +1442,8 @@ public partial class MainWindow : Window
 
             if (_currentFilePath != null)
                 await OpenMarkdownFile(_currentFilePath);
+            else if (_mapShown)
+                ShowMap();
             else if (_placeholderMarkdown != null)
                 ShowPlaceholder(_placeholderMarkdown);
         });

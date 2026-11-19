@@ -55,7 +55,7 @@ public static class ReversaArchiveService
     };
 
     /// <summary>A Markdown task still open: "- [ ] …" (RN-07, D-08).</summary>
-    private static readonly Regex OpenTask = new(@"^\s*[-*+]\s+\[ \]", RegexOptions.Multiline | RegexOptions.Compiled);
+    internal static readonly Regex OpenTask = new(@"^\s*[-*+]\s+\[ \]", RegexOptions.Multiline | RegexOptions.Compiled);
 
     private static readonly Regex FeatureFolder = new(@"^\d+-", RegexOptions.Compiled);
 

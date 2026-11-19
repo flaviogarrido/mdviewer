@@ -15,7 +15,7 @@ public static class ReversaProjectService
 {
     private const string DefaultOutputFolder = "_reversa_sdd";
     private const string DefaultForwardFolder = "_reversa_forward";
-    private const long MaxJsonBytes = 1024 * 1024;
+    internal const long MaxJsonBytes = 1024 * 1024;
     private const int MaxHeaderLines = 64;
     private const string PreferredEngine = ".claude";
 
@@ -44,20 +44,28 @@ public static class ReversaProjectService
         }
 
         var activeFeatureDir = ReadActiveFeatureDir(root, reversaDir, forwardFolder);
-        var (skills, skillCount) = BuildSkills(root);
-        var flow = new FlowBuilder(root, outputFolder, forwardFolder, activeFeatureDir).Build();
+
+        // Guide and map first: the Skills and Flow views show their state (feature 014).
+        var skillDirs = FindSkills(root);
+        var skillFiles = skillDirs.ToDictionary(
+            kv => kv.Key, kv => Path.Combine(kv.Value, "SKILL.md"), StringComparer.OrdinalIgnoreCase);
+        var guide = ReversaGuideService.Build(root, outputFolder, activeFeatureDir, skillFiles);
+        var map = ReversaMapService.Build(guide, skillFiles);
+
+        var (skills, skillCount) = BuildSkills(root, skillDirs, map);
+        var flow = new FlowBuilder(root, outputFolder, forwardFolder, activeFeatureDir, guide).Build();
         var flowDocuments = flow.AllNodes()
             .Where(n => !n.IsDirectory)
             .Select(n => n.FullPath)
             .ToList();
 
         return new ReversaProject(root, version, outputFolder, forwardFolder, activeFeatureDir,
-            skills, skillCount, flow, flowDocuments);
+            skills, skillCount, flow, flowDocuments, guide: guide, map: map);
     }
 
     #region state.json / active-requirements.json
 
-    private static JsonDocument? ReadJson(string path)
+    internal static JsonDocument? ReadJson(string path)
     {
         try
         {
@@ -71,7 +79,7 @@ public static class ReversaProjectService
         }
     }
 
-    private static string? GetString(JsonElement obj, string property) =>
+    internal static string? GetString(JsonElement obj, string property) =>
         obj.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
@@ -190,9 +198,9 @@ public static class ReversaProjectService
     /// <summary>
     /// One entry per skill (<c>&lt;engine&gt;/skills/&lt;name&gt;/SKILL.md</c>,
     /// keyed by folder name), preferring the <c>.claude</c> copy, then the first
-    /// engine folder in ordinal order. Grouped by family.
+    /// engine folder in ordinal order. Folder name → skill folder.
     /// </summary>
-    private static (FolderTree Tree, int Count) BuildSkills(string root)
+    private static Dictionary<string, string> FindSkills(string root)
     {
         var chosen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var engines = FolderTreeService.EnumerateSorted(root, directories: true)
@@ -211,6 +219,18 @@ public static class ReversaProjectService
             }
         }
 
+        return chosen;
+    }
+
+    /// <summary>
+    /// The Skills view, aligned with the usage map (feature 014): groups are
+    /// the map scenarios (A to H) and then the skills outside them; inside a
+    /// group, skills come in order of use. A skill the map shows as done or
+    /// as the next step carries that mark.
+    /// </summary>
+    private static (FolderTree Tree, int Count) BuildSkills(
+        string root, Dictionary<string, string> chosen, ReversaMap map)
+    {
         var index = new Dictionary<string, FileTreeNode>(StringComparer.OrdinalIgnoreCase);
         if (chosen.Count == 0)
         {
@@ -234,16 +254,28 @@ public static class ReversaProjectService
             .Select(kv => (Key: kv.Key, Dir: kv.Value, Header: ReadSkillHeader(Path.Combine(kv.Value, "SKILL.md"))))
             .Select(s => (s.Key, s.Dir, s.Header.Description, Name: s.Header.Name ?? s.Key))
             .ToList();
-        skills.Sort((a, b) => NativeMethods.StrCmpLogicalW(a.Name, b.Name));
+        // Order of use inside the group; skills without a place come last, by name.
+        skills.Sort((a, b) =>
+        {
+            var byPlace = SkillFamilies.Position(a.Key).CompareTo(SkillFamilies.Position(b.Key));
+            return byPlace != 0 ? byPlace : NativeMethods.StrCmpLogicalW(a.Name, b.Name);
+        });
 
         foreach (var skill in skills)
         {
             var family = families[SkillFamilies.Of(skill.Key)];
             var skillMd = Path.Combine(skill.Dir, "SKILL.md");
+            var state = map.Find(skill.Key)?.State ?? MapStepState.None;
             var node = new FileTreeNode(skill.Name, skillMd, isDirectory: false, family)
             {
-                IconOverride = "🧩",
-                Description = skill.Description
+                IconOverride = state switch
+                {
+                    MapStepState.Done => "✅",
+                    MapStepState.Current => "▶️",
+                    _ => "🧩"
+                },
+                IsHighlighted = state == MapStepState.Current,
+                Description = WithState(skill.Description, state)
             };
             foreach (var aux in EnumerateSkillAuxiliaries(skill.Dir, skillMd))
             {
@@ -260,6 +292,19 @@ public static class ReversaProjectService
             .Where(f => f.Children.Count > 0)
             .ToList();
         return (new FolderTree(root, nodes, index), skills.Count);
+    }
+
+    /// <summary>The skill description with the map state in words, for the tooltip and assistive technology.</summary>
+    private static string? WithState(string? description, MapStepState state)
+    {
+        var prefix = state switch
+        {
+            MapStepState.Done => "Done in this folder",
+            MapStepState.Current => "Next step",
+            _ => null
+        };
+        if (prefix == null) return description;
+        return description == null ? prefix : $"{prefix}\n{description}";
     }
 
     /// <summary>The skill's other Markdown files, by relative path in natural order.</summary>
@@ -289,78 +334,82 @@ public static class ReversaProjectService
     }
 
     /// <summary>
-    /// Fixed skill → family table, from the teams of the reversa-agents-help
-    /// catalog (Reversa 1.3.6). Unknown "reversa-*" skills go to "Reversa
+    /// Fixed skill → group table (Reversa 1.3.6). The first groups are the
+    /// scenarios of the usage map, with the map's own skills in order of use
+    /// plus the skills of the same team that the map does not show; then the
+    /// teams outside the scenarios. Unknown "reversa-*" skills go to "Reversa
     /// (other)", anything else to "Other".
     /// </summary>
     private static class SkillFamilies
     {
         public const string ReversaOther = "Reversa (other)";
         public const string Other = "Other";
+        private const string IndependentAgents = "Independent agents";
 
-        private static readonly (string Family, string[] Skills)[] Table =
+        // Skills of a scenario's team that are not on the map, after the map's own.
+        private static readonly Dictionary<string, string[]> ScenarioExtras = new()
         {
-            ("Core (extraction)", new[]
+            ["A"] = new[] { "reversa-agents-help" },
+            ["D"] = new[]
             {
-                "reversa", "reversa-autonomous", "reversa-scout", "reversa-archaeologist", "reversa-detective",
-                "reversa-architect", "reversa-writer", "reversa-reviewer", "reversa-visor", "reversa-data-master",
-                "reversa-design-system", "reversa-extract-soul", "reversa-reconstructor", "reversa-agents-help"
-            }),
-            ("Ideation", new[]
+                "reversa-forward-autonomous", "reversa-code-express", "reversa-resume", "reversa-principles"
+            },
+            ["E"] = new[] { "reversa-debugger-debate", "reversa-debugger-graph", "reversa-depth-inspection" },
+        };
+
+        private static readonly (string Family, string[] Skills)[] Table = BuildTable();
+
+        private static (string Family, string[] Skills)[] BuildTable()
+        {
+            var table = new List<(string, string[])>();
+            foreach (var (letter, _, skills) in ReversaMapService.Layout.Where(l => l.Letter != null))
             {
-                "reversa-brainstorm", "reversa-framer", "reversa-explorer", "reversa-challenger",
-                "reversa-arbiter", "reversa-pre-spec"
-            }),
-            ("New project", new[]
-            {
-                "reversa-new", "reversa-ideator", "reversa-researcher", "reversa-drafter", "reversa-spec-sdd"
-            }),
-            ("Forward", new[]
-            {
-                "reversa-forward", "reversa-forward-autonomous", "reversa-requirements", "reversa-clarify",
-                "reversa-plan", "reversa-to-do", "reversa-audit", "reversa-quality", "reversa-coding",
-                "reversa-code-express", "reversa-add", "reversa-sync", "reversa-resume", "reversa-principles"
-            }),
-            ("Bugs", new[]
-            {
-                "reversa-debugger", "reversa-debugger-debate", "reversa-debugger-fix", "reversa-debugger-graph",
-                "reversa-depth-inspection"
-            }),
-            ("Code quality", new[]
-            {
-                "reversa-refactor", "reversa-optimize", "reversa-decouple", "reversa-modularize", "reversa-prune",
-                "reversa-restructure", "reversa-simplify", "reversa-standardize"
-            }),
-            ("Migration", new[]
+                var extras = ScenarioExtras.TryGetValue(letter!, out var e) ? e : Array.Empty<string>();
+                table.Add((ReversaMapService.ScenarioLabel(letter!), skills.Concat(extras).ToArray()));
+            }
+
+            table.Add(("Migration", new[]
             {
                 "reversa-migrate", "reversa-paradigm-advisor", "reversa-curator", "reversa-strategist",
                 "reversa-designer", "reversa-screen-translator", "reversa-inspector"
-            }),
-            ("Docs", new[]
+            }));
+            table.Add(("Docs", new[]
             {
-                "reversa-docs", "reversa-docs-analyst", "reversa-docs-mapper", "reversa-docs-publisher",
-                "reversa-docs-storyteller", "reversa-arquitetura-3d", "reversa-especialista-d3",
+                "reversa-docs", "reversa-docs-analyst", "reversa-docs-mapper", "reversa-docs-storyteller",
+                "reversa-docs-publisher", "reversa-arquitetura-3d", "reversa-especialista-d3",
                 "reversa-highcharts-visualizer", "reversa-selo-generativo", "reversa-image-prompt-json"
-            }),
-            ("Pricing", new[]
-            {
-                "reversa-pricing", "reversa-pricing-advisor", "reversa-pricing-profile", "reversa-pricing-research",
-                "reversa-pricing-product", "reversa-pricing-size", "reversa-pricing-estimate"
-            }),
-            ("Front-end", new[] { "impeccable" }),
-        };
+            }));
+            table.Add((IndependentAgents,
+                ReversaMapService.Layout.First(l => l.Title == IndependentAgents).Skills.ToArray()));
+            table.Add(("Front-end", new[] { "impeccable" }));
+            return table.ToArray();
+        }
 
-        private static readonly Dictionary<string, string> BySkill = Table
-            .SelectMany(t => t.Skills.Select(s => (Skill: s, t.Family)))
-            .ToDictionary(x => x.Skill, x => x.Family, StringComparer.OrdinalIgnoreCase);
+        // First group wins: a skill belongs to one group only.
+        private static readonly Dictionary<string, (string Family, int Position)> BySkill = BuildIndex();
+
+        private static Dictionary<string, (string, int)> BuildIndex()
+        {
+            var index = new Dictionary<string, (string, int)>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (family, skills) in Table)
+            {
+                for (var i = 0; i < skills.Length; i++)
+                    index.TryAdd(skills[i], (family, i));
+            }
+            return index;
+        }
 
         public static readonly IReadOnlyList<string> Order =
             Table.Select(t => t.Family).Append(ReversaOther).Append(Other).ToList();
 
         public static string Of(string skillKey) =>
-            BySkill.TryGetValue(skillKey, out var family) ? family
+            BySkill.TryGetValue(skillKey, out var entry) ? entry.Family
             : skillKey.StartsWith("reversa-", StringComparison.OrdinalIgnoreCase) ? ReversaOther
             : Other;
+
+        /// <summary>Place of the skill in its group (order of use); skills without one come last.</summary>
+        public static int Position(string skillKey) =>
+            BySkill.TryGetValue(skillKey, out var entry) ? entry.Position : int.MaxValue;
     }
 
     #endregion
@@ -396,11 +445,14 @@ public static class ReversaProjectService
         private readonly string _out;
         private readonly string _fwd;
         private readonly string? _activeFeatureDir;
+        private readonly ReversaGuide _guide;
         private readonly Dictionary<string, FileTreeNode> _index = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _claimed = new(StringComparer.OrdinalIgnoreCase);
 
-        public FlowBuilder(string root, string outputFolder, string forwardFolder, string? activeFeatureDir)
+        public FlowBuilder(
+            string root, string outputFolder, string forwardFolder, string? activeFeatureDir, ReversaGuide guide)
         {
+            _guide = guide;
             _root = root;
             _out = Path.Combine(root, outputFolder);
             _fwd = Path.Combine(root, forwardFolder);
@@ -410,46 +462,46 @@ public static class ReversaProjectService
         public FolderTree Build()
         {
             var stages = new List<FileTreeNode>();
-            AddStage(stages, 1, "Conception", core: false, FillConception);
-            AddStage(stages, 2, "Reconnaissance", core: true, s =>
+            AddStage(stages, 1, "Conception", core: false, ConceptionHelp, FillConception);
+            AddStage(stages, 2, "Reconnaissance", core: true, Discovery("Scout"), s =>
             {
                 Files(s, _out, "inventory.md", "dependencies.md");
                 TopFiles(s, _out, n => n.StartsWith("surface", StringComparison.OrdinalIgnoreCase));
             });
-            AddStage(stages, 3, "Excavation", core: true, s =>
+            AddStage(stages, 3, "Excavation", core: true, Discovery("Archaeologist"), s =>
             {
                 Files(s, _out, "code-analysis.md", "data-dictionary.md");
                 Folder(s, Path.Combine(_out, "flowcharts"));
             });
-            AddStage(stages, 4, "Interpretation", core: true, s =>
+            AddStage(stages, 4, "Interpretation", core: true, Discovery("Detective"), s =>
             {
                 Files(s, _out, "domain.md", "state-machines.md", "permissions.md");
                 Folder(s, Path.Combine(_out, "adrs"));
             });
-            AddStage(stages, 5, "Architecture", core: true, s =>
+            AddStage(stages, 5, "Architecture", core: true, Discovery("Architect"), s =>
             {
                 Files(s, _out, "architecture.md");
                 Folder(s, Path.Combine(_out, "architecture"));
                 Files(s, _out, "c4-context.md", "c4-containers.md", "c4-components.md");
                 TopFiles(s, _out, n => n.StartsWith("erd", StringComparison.OrdinalIgnoreCase));
             });
-            AddStage(stages, 6, "Specification", core: true, FillSpecification);
-            AddStage(stages, 7, "Review", core: true, s =>
+            AddStage(stages, 6, "Specification", core: true, Discovery("Writer"), FillSpecification);
+            AddStage(stages, 7, "Review", core: true, Discovery("Reviewer"), s =>
             {
                 Files(s, _out, "confidence-report.md", "questions.md", "gaps.md", "user-decisions.md");
                 TopFiles(s, _out, n => n.StartsWith("cross-review", StringComparison.OrdinalIgnoreCase));
             });
-            AddStage(stages, 8, "Evolution", core: true, FillEvolution);
-            AddStage(stages, 9, "Bugs", core: false, s => Contents(s, Path.Combine(_root, "_reversa_bugs")));
-            AddStage(stages, 10, "Refactoring", core: false, s => Contents(s, Path.Combine(_root, "_reversa_refactor")));
-            AddStage(stages, 11, "Migration", core: false, s =>
+            AddStage(stages, 8, "Evolution", core: true, Scenario("D", "reversa-forward"), FillEvolution);
+            AddStage(stages, 9, "Bugs", core: false, Scenario("E", "reversa-debugger"), s => Contents(s, Path.Combine(_root, "_reversa_bugs")));
+            AddStage(stages, 10, "Refactoring", core: false, Scenario("F", "reversa-refactor"), s => Contents(s, Path.Combine(_root, "_reversa_refactor")));
+            AddStage(stages, 11, "Migration", core: false, AfterDiscovery("reversa-migrate"), s =>
             {
                 Folder(s, Path.Combine(_out, "migration"));
                 Folder(s, Path.Combine(_out, "screens"));
             });
-            AddStage(stages, 12, "Documentation", core: false, s => Contents(s, Path.Combine(_root, "_reversa_docs")));
-            AddStage(stages, 13, "Pricing", core: false, s => Contents(s, Path.Combine(_out, "_pricing")));
-            AddStage(stages, 14, "Other", core: false, s =>
+            AddStage(stages, 12, "Documentation", core: false, AfterDiscovery("reversa-docs"), s => Contents(s, Path.Combine(_root, "_reversa_docs")));
+            AddStage(stages, 13, "Pricing", core: false, Scenario("G", "reversa-pricing"), s => Contents(s, Path.Combine(_out, "_pricing")));
+            AddStage(stages, 14, "Other", core: false, null, s =>
             {
                 Contents(s, _out);
                 Folder(s, _fwd);
@@ -458,24 +510,51 @@ public static class ReversaProjectService
             return new FolderTree(_root, stages, _index);
         }
 
-        private static FileTreeNode NewStage(int number, string name, bool pending) =>
+        // Where each stage sits on the usage map (feature 014): shown as the stage tooltip.
+        private static string ConceptionHelp =>
+            $"Map: {ReversaMapService.ScenarioLabel("B")} (/reversa-brainstorm) or "
+            + $"{ReversaMapService.ScenarioLabel("C")} (/reversa-new)";
+
+        private static string Discovery(string agent) =>
+            $"Map: {ReversaMapService.ScenarioLabel("A")} (/reversa), {agent}";
+
+        private static string Scenario(string letter, string skill) =>
+            $"Map: {ReversaMapService.ScenarioLabel(letter)} (/{skill})";
+
+        private static string AfterDiscovery(string skill) => $"Map: After discovery (/{skill})";
+
+        /// <param name="help">Scenario and command that produce the stage; null for none.</param>
+        private static FileTreeNode NewStage(int number, string name, bool pending, string? help) =>
             new(pending ? $"{name} (pending)" : name, $"reversa:flow/{number:00}-{name.ToLowerInvariant()}",
                 isDirectory: true, parent: null)
             {
                 IsGroup = true,
                 IsPending = pending,
-                IconOverride = "🧭"
+                IconOverride = "🧭",
+                Description = pending ? (help == null ? "No documents yet" : $"No documents yet. {help}") : help
             };
 
-        private static void AddStage(List<FileTreeNode> stages, int number, string name, bool core, Action<FileTreeNode> fill)
+        private static void AddStage(
+            List<FileTreeNode> stages, int number, string name, bool core, string? help, Action<FileTreeNode> fill)
         {
-            var stage = NewStage(number, name, pending: false);
+            var stage = NewStage(number, name, pending: false, help);
             fill(stage);
             if (stage.Children.Count > 0)
                 stages.Add(stage);
             else if (core)
-                stages.Add(NewStage(number, name, pending: true));
+                stages.Add(NewStage(number, name, pending: true, help));
         }
+
+        /// <summary>The forward stage of the active feature, as shown after its folder name.</summary>
+        private string? ActiveStageText() => _guide.Stage switch
+        {
+            FeatureStage.Empty => "no requirements",
+            FeatureStage.Requirements => "requirements",
+            FeatureStage.Plan => "plan",
+            FeatureStage.Coding => $"coding {_guide.ActionsDone}/{_guide.ActionsTotal}",
+            FeatureStage.Done => _guide.Synced ? "synced" : "delivered",
+            _ => null
+        };
 
         private void FillConception(FileTreeNode stage)
         {
@@ -534,11 +613,13 @@ public static class ReversaProjectService
                     var match = FeatureFolder.Match(name);
                     if (!match.Success) continue;
 
-                    var feature = new FileTreeNode(name, dir, isDirectory: true, stage)
+                    var isActive = _activeFeatureDir != null
+                                   && string.Equals(Path.TrimEndingDirectorySeparator(dir), _activeFeatureDir,
+                                       StringComparison.OrdinalIgnoreCase);
+                    var label = isActive && ActiveStageText() is { } stageText ? $"{name} · {stageText}" : name;
+                    var feature = new FileTreeNode(label, dir, isDirectory: true, stage)
                     {
-                        IsHighlighted = _activeFeatureDir != null
-                                        && string.Equals(Path.TrimEndingDirectorySeparator(dir), _activeFeatureDir,
-                                            StringComparison.OrdinalIgnoreCase)
+                        IsHighlighted = isActive
                     };
                     Files(feature, dir, FeatureOrder);
                     Folder(feature, Path.Combine(dir, "audit"));

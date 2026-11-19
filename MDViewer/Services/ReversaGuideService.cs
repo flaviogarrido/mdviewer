@@ -26,8 +26,6 @@ public static class ReversaGuideService
     // The numeric prefix of a feature folder: "012" or "20261118-205300".
     private static readonly Regex FeatureNumber = new(@"^\d+(-\d+)?", RegexOptions.Compiled);
 
-    private enum FeatureStage { Empty, Requirements, Plan, Coding, Done }
-
     private sealed record Feature(string Id, FeatureStage Stage, int Doubts, int Done, int Total, bool Synced);
 
     /// <param name="activeFeatureDir">Already validated by <see cref="ReversaProjectService"/>; null when there is none.</param>
@@ -45,6 +43,12 @@ public static class ReversaGuideService
             return new ReversaGuide(GuideSituation.StateUnreadable, "Reversa state could not be read",
                 ".reversa/state.json is not valid JSON", Array.Empty<GuideSuggestion>());
         }
+
+        var stateRoot = state.RootElement;
+        var completedPhases = StringArray(stateRoot, "completed");
+        var completed = ArrayCount(stateRoot, "completed");
+        var phase = ReversaProjectService.GetString(stateRoot, "phase");
+        var hasPhase = !string.IsNullOrWhiteSpace(phase);
 
         var feature = activeFeatureDir == null ? null : ReadFeature(activeFeatureDir, outputDir);
         var suggestions = new List<GuideSuggestion>();
@@ -102,11 +106,6 @@ public static class ReversaGuideService
         }
         else
         {
-            var stateRoot = state.RootElement;
-            var completed = ArrayCount(stateRoot, "completed");
-            var phase = ReversaProjectService.GetString(stateRoot, "phase");
-            var hasPhase = !string.IsNullOrWhiteSpace(phase);
-
             var unfinished = ArrayCount(stateRoot, "pending") > 0
                              || HasOpenPlanTask(Path.Combine(reversaDir, "plan.md"))
                              || (hasPhase && completed == 0);
@@ -142,7 +141,14 @@ public static class ReversaGuideService
         }
 
         AddComplementary(suggestions, root, reversaDir, outputDir, skillFiles);
-        return new ReversaGuide(situation, title, detail, suggestions);
+        return new ReversaGuide(situation, title, detail, suggestions)
+        {
+            Stage = feature?.Stage,
+            HasDoubts = feature is { Doubts: > 0 },
+            Synced = feature is { Synced: true },
+            CompletedPhases = completedPhases,
+            Phase = hasPhase ? phase : null
+        };
     }
 
     #region Suggestions
@@ -241,6 +247,14 @@ public static class ReversaGuideService
         obj.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.Array
             ? value.GetArrayLength()
             : 0;
+
+    private static IReadOnlyList<string> StringArray(JsonElement obj, string property) =>
+        obj.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.Array
+            ? value.EnumerateArray()
+                .Where(e => e.ValueKind == JsonValueKind.String)
+                .Select(e => e.GetString()!)
+                .ToList()
+            : Array.Empty<string>();
 
     private static bool HasOpenPlanTask(string planPath) =>
         ReadText(planPath) is { } plan && ReversaArchiveService.OpenTask.IsMatch(plan);

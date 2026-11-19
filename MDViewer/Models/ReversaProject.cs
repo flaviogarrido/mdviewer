@@ -24,10 +24,11 @@ public sealed class ReversaProject
         string rootPath, string? version, string outputFolder, string forwardFolder,
         string? activeFeatureDir, FolderTree skills, int skillCount,
         FolderTree flow, IReadOnlyList<string> flowDocuments, ArchiveStatus? archive = null,
-        ReversaGuide? guide = null)
+        ReversaGuide? guide = null, ReversaMap? map = null)
     {
         Archive = archive ?? ArchiveStatus.None;
         Guide = guide;
+        Map = map;
         RootPath = rootPath;
         Version = version;
         OutputFolder = outputFolder;
@@ -66,7 +67,10 @@ public sealed class ReversaProject
     /// <summary>"Where am I / next step" (feature 012); null only in snapshots built without it.</summary>
     public ReversaGuide? Guide { get; }
 
+    /// <summary>The usage map (feature 013); null only in snapshots built without it.</summary>
+    public ReversaMap? Map { get; }
+
     /// <summary>The same snapshot with another <see cref="Archive"/> status.</summary>
     public ReversaProject WithArchive(ArchiveStatus archive) =>
-        new(RootPath, Version, OutputFolder, ForwardFolder, ActiveFeatureDir, Skills, SkillCount, Flow, FlowDocuments, archive, Guide);
+        new(RootPath, Version, OutputFolder, ForwardFolder, ActiveFeatureDir, Skills, SkillCount, Flow, FlowDocuments, archive, Guide, Map);
 }

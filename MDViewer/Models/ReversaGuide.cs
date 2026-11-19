@@ -19,6 +19,21 @@ public enum GuideSituation
     NoExtraction
 }
 
+/// <summary>Stage of a forward feature, read from the files of its folder only.</summary>
+public enum FeatureStage
+{
+    /// <summary>No <c>requirements.md</c>.</summary>
+    Empty,
+    /// <summary><c>requirements.md</c> without <c>roadmap.md</c>.</summary>
+    Requirements,
+    /// <summary><c>roadmap.md</c> without action rows in <c>actions.md</c>.</summary>
+    Plan,
+    /// <summary>At least one open action.</summary>
+    Coding,
+    /// <summary>Every action closed.</summary>
+    Done
+}
+
 public enum GuideSuggestionKind
 {
     /// <summary>The next command; at most one.</summary>
@@ -39,6 +54,9 @@ public sealed record GuideSuggestion(string Command, string Hint, string? SkillP
     public bool CanOpenSkill => SkillPath != null;
     public string CopyLabel => $"Copy {Command}";
     public string OpenToolTip => SkillPath != null ? $"Open the {Command} skill" : $"{Command} is not installed in this folder";
+
+    /// <summary>The command: what assistive technology reads for the list item.</summary>
+    public override string ToString() => Command;
 }
 
 /// <summary>
@@ -51,4 +69,21 @@ public sealed record ReversaGuide(
     GuideSituation Situation, string Title, string Detail, IReadOnlyList<GuideSuggestion> Suggestions)
 {
     public GuideSuggestion? Primary => Suggestions.FirstOrDefault(s => s.IsPrimary);
+
+    // What was read to reach the situation, for the map (feature 013).
+
+    /// <summary>Stage of the active feature; null when there is none.</summary>
+    public FeatureStage? Stage { get; init; }
+
+    /// <summary>The active feature requirements still have open questions.</summary>
+    public bool HasDoubts { get; init; }
+
+    /// <summary>The active feature has an addendum in the extraction.</summary>
+    public bool Synced { get; init; }
+
+    /// <summary><c>state.json#completed</c>: discovery phases already done.</summary>
+    public IReadOnlyList<string> CompletedPhases { get; init; } = Array.Empty<string>();
+
+    /// <summary><c>state.json#phase</c>; null when empty.</summary>
+    public string? Phase { get; init; }
 }

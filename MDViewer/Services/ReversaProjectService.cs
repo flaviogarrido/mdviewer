@@ -52,9 +52,10 @@ public static class ReversaProjectService
             .ToList();
 
         var guide = ReversaGuideService.Build(root, outputFolder, activeFeatureDir, skillFiles);
+        var map = ReversaMapService.Build(guide, skillFiles);
 
         return new ReversaProject(root, version, outputFolder, forwardFolder, activeFeatureDir,
-            skills, skillCount, flow, flowDocuments, guide: guide);
+            skills, skillCount, flow, flowDocuments, guide: guide, map: map);
     }
 
     #region state.json / active-requirements.json

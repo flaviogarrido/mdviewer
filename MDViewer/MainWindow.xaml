@@ -228,6 +228,13 @@
                                          x:Name="ViewFlowButton" Checked="ViewToggle_Checked"
                                          AutomationProperties.Name="View: Flow"
                                          ToolTip="Reversa documents in software engineering order"/>
+                            <!-- Reversa map (feature 013): a page in the document area,
+                                 not a tree view, so it is a button and not a fourth toggle. -->
+                            <Button Style="{StaticResource ToolbarButton}" x:Name="MapButton"
+                                    MinWidth="0" Height="22" Padding="10,0" Margin="6,0,0,0" FontSize="12"
+                                    Content="Map" Click="Map_Click"
+                                    ToolTip="Reversa map: the scenarios, their commands and where this project stands"
+                                    AutomationProperties.Name="Reversa map"/>
                         </StackPanel>
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                             <!-- Reversa actions (feature 011), only for Reversa folders.

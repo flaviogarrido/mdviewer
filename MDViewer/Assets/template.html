@@ -27,6 +27,21 @@
                 return;
             }
 
+            // Reversa map: open a skill document or copy a command. The host
+            // answers only while the map is the page shown.
+            var skill = link.getAttribute('data-skill');
+            if (skill) {
+                e.preventDefault();
+                window.chrome.webview.postMessage(JSON.stringify({ type: 'skill', name: skill }));
+                return;
+            }
+            var copy = link.getAttribute('data-copy');
+            if (copy) {
+                e.preventDefault();
+                window.chrome.webview.postMessage(JSON.stringify({ type: 'copy', name: copy }));
+                return;
+            }
+
             var href = link.getAttribute('href');
             if (!href) return;
 
@@ -181,6 +196,80 @@
         }
         .flow-footer a { overflow-wrap: anywhere; }
         .flow-footer .flow-next { margin-left: auto; text-align: right; }
+
+        /* Reversa map (a page built by the app, not a document) */
+        .rv-here {
+            border: 1px solid var(--border-color);
+            border-left: 4px solid var(--link-color);
+            border-radius: 6px;
+            padding: 12px 16px;
+            margin-bottom: 1.5em;
+            background: var(--code-bg);
+        }
+        .rv-here-title { font-weight: 600; font-size: 1.15em; }
+        .rv-here-detail { opacity: 0.85; }
+        .rv-next { margin-top: 8px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-weight: 600; }
+        .rv-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 14px;
+            margin-bottom: 1.5em;
+        }
+        .rv-card {
+            --rv-accent: var(--border-color);
+            border: 1px solid var(--border-color);
+            border-top: 4px solid var(--rv-accent);
+            border-radius: 6px;
+            padding: 12px 14px;
+            min-width: 0;
+        }
+        .rv-a { --rv-accent: #2f7ed8; } .rv-b { --rv-accent: #8a5cd6; }
+        .rv-c { --rv-accent: #2e8f55; } .rv-d { --rv-accent: #b9800f; }
+        .rv-e { --rv-accent: #d6455d; } .rv-f { --rv-accent: #cf6a1c; }
+        .rv-g { --rv-accent: #1b8a94; } .rv-h { --rv-accent: #5b6bd6; }
+        .rv-card.rv-current { outline: 2px solid var(--link-color); outline-offset: 1px; }
+        .rv-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 4px; }
+        .rv-letter {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 1.7em; height: 1.7em; border-radius: 50%;
+            background: var(--rv-accent); color: #fff; font-weight: 700; font-size: 0.9em;
+        }
+        .rv-title { font-weight: 600; font-size: 1.05em; }
+        .rv-tag {
+            font-size: 0.75em; border: 1px solid var(--link-color); color: var(--link-color);
+            border-radius: 10px; padding: 0 8px; white-space: nowrap;
+        }
+        .rv-tag-work { border-color: var(--border-color); color: inherit; }
+        .rv-summary { font-size: 0.9em; opacity: 0.85; margin-bottom: 8px; }
+        .rv-entry, .rv-steps li {
+            display: grid;
+            grid-template-columns: 1.3em minmax(0, 1fr) auto;
+            column-gap: 4px;
+            align-items: baseline;
+        }
+        .rv-entry { font-weight: 600; padding: 3px 4px; margin: 0 -4px; border-radius: 4px; }
+        .rv-steps { list-style: none; margin: 4px 0 0 0; padding: 0; }
+        .rv-steps li {
+            margin: 0 -4px; padding: 3px 4px; border-radius: 4px;
+            border-top: 1px dashed var(--border-color);
+        }
+        .rv-now { background: var(--code-bg); font-weight: 600; }
+        .rv-label { grid-column: 2 / 4; font-size: 0.85em; font-weight: 400; opacity: 0.85; }
+        .rv-opt { font-size: 0.85em; border: 1px solid var(--border-color); border-radius: 3px; padding: 0 4px; }
+        .rv-cmd {
+            font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+            font-size: 0.9em; overflow-wrap: anywhere;
+        }
+        .rv-missing { opacity: 0.5; }
+        .rv-copy {
+            font-size: 0.75em; font-weight: 400; color: inherit; opacity: 0.75; white-space: nowrap;
+            border: 1px solid var(--border-color); border-radius: 4px; padding: 0 6px;
+        }
+        .rv-copy:hover, .rv-copy:focus { opacity: 1; border-color: var(--link-color); text-decoration: none; }
+        .rv-mark-done { color: #2e8f55; font-weight: 700; }
+        [data-theme="dark"] .rv-mark-done { color: #6ccb8f; }
+        .rv-mark-now { color: var(--link-color); }
+        .rv-legend { font-size: 0.85em; opacity: 0.85; }
 
     </style>
 </head>

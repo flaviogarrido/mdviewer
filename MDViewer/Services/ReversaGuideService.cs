@@ -146,6 +146,8 @@ public static class ReversaGuideService
             Stage = feature?.Stage,
             HasDoubts = feature is { Doubts: > 0 },
             Synced = feature is { Synced: true },
+            ActionsDone = feature?.Done ?? 0,
+            ActionsTotal = feature?.Total ?? 0,
             CompletedPhases = completedPhases,
             Phase = hasPhase ? phase : null
         };

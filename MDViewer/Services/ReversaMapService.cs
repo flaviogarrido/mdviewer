@@ -111,6 +111,24 @@ public static class ReversaMapService
         }),
     };
 
+    /// <summary>
+    /// Scenarios and sections in map order, each with its skills in order of
+    /// use (entry command first). The Skills view groups by it (feature 014).
+    /// </summary>
+    internal static IReadOnlyList<(string? Letter, string Title, IReadOnlyList<string> Skills)> Layout { get; } =
+        Scenarios.Concat(Sections)
+            .Select(g => (g.Letter, g.Title, (IReadOnlyList<string>)(g.Entry == null
+                ? g.Steps.Select(s => s.Skill).ToList()
+                : g.Steps.Select(s => s.Skill).Prepend(g.Entry).ToList())))
+            .ToList();
+
+    /// <summary>"A · Legacy system": how a scenario is named outside the map page.</summary>
+    internal static string ScenarioLabel(string letter)
+    {
+        var scenario = Layout.First(l => l.Letter == letter);
+        return $"{scenario.Letter} · {scenario.Title}";
+    }
+
     #region Build
 
     /// <param name="skillFiles">Installed skills: folder name → <c>SKILL.md</c> path.</param>

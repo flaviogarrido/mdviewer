@@ -51,8 +51,8 @@ public sealed class FileTreeNode : INotifyPropertyChanged
     /// <summary>Fixed icon replacing the computed folder/file icon.</summary>
     public string? IconOverride { get; init; }
 
-    /// <summary>Tree tooltip: the description, else the path; none for groups.</summary>
-    public string? ToolTipText => IsGroup ? null : Description ?? FullPath;
+    /// <summary>Tree tooltip: the description, else the path; a group has only its description, if any.</summary>
+    public string? ToolTipText => IsGroup ? Description : Description ?? FullPath;
 
     /// <summary>Observable so the "Open files" section updates in place.</summary>
     public ObservableCollection<FileTreeNode> Children { get; } = new();

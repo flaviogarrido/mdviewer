@@ -332,6 +332,7 @@
                             <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}"/>
                             <Setter Property="ToolTip" Value="{Binding ToolTipText}"/>
                             <Setter Property="AutomationProperties.Name" Value="{Binding Name}"/>
+                            <Setter Property="AutomationProperties.HelpText" Value="{Binding ToolTipText}"/>
                             <Setter Property="Foreground" Value="{DynamicResource PrimaryText}"/>
                             <EventSetter Event="Selected" Handler="TreeViewItem_Selected"/>
                             <Style.Triggers>
@@ -340,7 +341,6 @@
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding IsPending}" Value="True">
                                     <Setter Property="Foreground" Value="{DynamicResource SecondaryText}"/>
-                                    <Setter Property="ToolTip" Value="No documents yet"/>
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>

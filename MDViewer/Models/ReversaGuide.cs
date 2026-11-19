@@ -81,6 +81,10 @@ public sealed record ReversaGuide(
     /// <summary>The active feature has an addendum in the extraction.</summary>
     public bool Synced { get; init; }
 
+    /// <summary>Closed and total actions of the active feature; 0 before <c>actions.md</c> has rows.</summary>
+    public int ActionsDone { get; init; }
+    public int ActionsTotal { get; init; }
+
     /// <summary><c>state.json#completed</c>: discovery phases already done.</summary>
     public IReadOnlyList<string> CompletedPhases { get; init; } = Array.Empty<string>();
 

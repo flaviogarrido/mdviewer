@@ -25,7 +25,7 @@ public class MarkdownRenderService
         (string? PrevLabel, string? NextLabel)? flowFooter = null)
     {
         var htmlContent = Markdown.ToHtml(markdown, _pipeline);
-        return ApplyTemplate(htmlContent, isDarkTheme, baseHref, flowFooter);
+        return ApplyTemplate(htmlContent, isDarkTheme, baseHref, flowFooter, ViewerPage);
     }
 
     /// <summary>
@@ -33,10 +33,34 @@ public class MarkdownRenderService
     /// the template is applied. Never pass document content here.
     /// </summary>
     public string RenderHtmlPage(string htmlContent, bool isDarkTheme) =>
-        ApplyTemplate(htmlContent, isDarkTheme, baseHref: null, flowFooter: null);
+        ApplyTemplate(htmlContent, isDarkTheme, baseHref: null, flowFooter: null, ViewerPage);
+
+    /// <summary>
+    /// The document as a standalone page for the default browser (feature
+    /// 016): same render and script policy as the viewer, with file: URIs for
+    /// the document folder and for <paramref name="mermaidPath"/>, the document
+    /// name as title and no Flow footer.
+    /// </summary>
+    public string RenderForBrowser(string markdown, bool isDarkTheme, string documentPath, string mermaidPath)
+    {
+        var htmlContent = Markdown.ToHtml(markdown, _pipeline);
+        var page = new PageSettings(
+            BaseUri: "file:",
+            MermaidSrc: BrowserExport.FileUri(mermaidPath),
+            Title: System.IO.Path.GetFileName(documentPath));
+        return ApplyTemplate(htmlContent, isDarkTheme, BrowserExport.FolderUri(documentPath), flowFooter: null, page);
+    }
+
+    /// <summary>Template values that differ between the viewer and the browser page.</summary>
+    private sealed record PageSettings(string BaseUri, string MermaidSrc, string Title);
+
+    private static readonly PageSettings ViewerPage = new(
+        BaseUri: "https://mddoc.local",
+        MermaidSrc: "https://assets.local/mermaid.min.js",
+        Title: "MDViewer");
 
     private string ApplyTemplate(string htmlContent, bool isDarkTheme, string? baseHref,
-        (string? PrevLabel, string? NextLabel)? flowFooter)
+        (string? PrevLabel, string? NextLabel)? flowFooter, PageSettings page)
     {
         var mermaidTheme = isDarkTheme ? "dark" : "default";
 
@@ -57,6 +81,10 @@ public class MarkdownRenderService
         return template
             .Replace("{{FLOW_FOOTER}}", BuildFlowFooter(flowFooter))
             .Replace("{{BASE_HREF}}", baseTag)
+            .Replace("{{BASE_URI}}", page.BaseUri)
+            .Replace("{{MERMAID_SRC}}", System.Net.WebUtility.HtmlEncode(page.MermaidSrc))
+            // Braces encoded: a file named "{{CONTENT}}.md" must not become a placeholder.
+            .Replace("{{TITLE}}", System.Net.WebUtility.HtmlEncode(page.Title).Replace("{", "&#123;"))
             .Replace("{{MERMAID_THEME}}", mermaidTheme)
             .Replace("{{NONCE}}", nonce)
             .Replace("{{CONTENT}}", htmlContent);

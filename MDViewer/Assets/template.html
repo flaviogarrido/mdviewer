@@ -5,17 +5,22 @@
     <!-- Only the app's own scripts (carrying the per-render nonce) run: <script>
          elements and inline event handlers inside documents are blocked. -->
     <meta http-equiv="Content-Security-Policy"
-          content="script-src 'nonce-{{NONCE}}'; object-src 'none'; base-uri https://mddoc.local; form-action 'none'">
+          content="script-src 'nonce-{{NONCE}}'; object-src 'none'; base-uri {{BASE_URI}}; form-action 'none'">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     {{BASE_HREF}}
-    <title>MDViewer</title>
-    <script nonce="{{NONCE}}" src="https://assets.local/mermaid.min.js"></script>
+    <title>{{TITLE}}</title>
+    <script nonce="{{NONCE}}" src="{{MERMAID_SRC}}"></script>
     <script nonce="{{NONCE}}">
+        // The viewer's bridge. Absent when the page is opened in a browser
+        // (feature 016): links then behave as in any page.
+        var host = window.chrome && window.chrome.webview;
+
         // Intercept link clicks for in-app navigation. Registered in <head>, before
         // the document content: a script in the document that tries to navigate
         // away is blocked by the host, and that also stops the rest of the page
         // from loading; links must keep working in that case.
         document.addEventListener('click', function(e) {
+            if (!host) return;
             var link = e.target.closest('a');
             if (!link) return;
 
@@ -23,7 +28,7 @@
             var flowDir = link.getAttribute('data-flow');
             if (flowDir === 'prev' || flowDir === 'next') {
                 e.preventDefault();
-                window.chrome.webview.postMessage(JSON.stringify({ type: 'flow', dir: flowDir }));
+                host.postMessage(JSON.stringify({ type: 'flow', dir: flowDir }));
                 return;
             }
 
@@ -32,13 +37,13 @@
             var skill = link.getAttribute('data-skill');
             if (skill) {
                 e.preventDefault();
-                window.chrome.webview.postMessage(JSON.stringify({ type: 'skill', name: skill }));
+                host.postMessage(JSON.stringify({ type: 'skill', name: skill }));
                 return;
             }
             var copy = link.getAttribute('data-copy');
             if (copy) {
                 e.preventDefault();
-                window.chrome.webview.postMessage(JSON.stringify({ type: 'copy', name: copy }));
+                host.postMessage(JSON.stringify({ type: 'copy', name: copy }));
                 return;
             }
 
@@ -55,7 +60,7 @@
 
             // All other links: delegate to the host application
             e.preventDefault();
-            window.chrome.webview.postMessage(JSON.stringify({ type: 'navigate', href: href }));
+            host.postMessage(JSON.stringify({ type: 'navigate', href: href }));
         });
     </script>
     <style>
@@ -321,7 +326,7 @@
             });
 
             Promise.all(renderPromises).then(function() {
-                window.chrome.webview.postMessage('render-complete');
+                if (host) host.postMessage('render-complete');
             });
         });
 

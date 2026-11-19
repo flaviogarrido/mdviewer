@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     private bool _webViewReady;
     private bool _renderComplete;
     private readonly ZoomLevel _zoom = new();
+    private readonly FullscreenLayout _fullscreen = new();
     private double? _pendingScrollRatio;
     private System.Timers.Timer? _debounceTimer;
     private readonly NavigationHistory _history = new();
@@ -332,6 +333,7 @@ public partial class MainWindow : Window
             _currentFilePath = filePath;
             _placeholderMarkdown = null;
             _mapShown = false;
+            UpdateOpenInBrowser();
             _folder.SyncSelection(filePath);
             if (_folder.RootFolder is { } root && IsUnderFolder(filePath, root))
                 SettingsService.LastFile = filePath;
@@ -758,6 +760,7 @@ public partial class MainWindow : Window
         _placeholderMarkdown = markdown;
         _mapShown = false;
         _currentFilePath = null;
+        UpdateOpenInBrowser();
         _pendingScrollRatio = null;
         _fileWatcher?.Dispose();
         _fileWatcher = null;
@@ -905,6 +908,7 @@ public partial class MainWindow : Window
         _mapShown = true;
         _placeholderMarkdown = null;
         _currentFilePath = null;
+        UpdateOpenInBrowser();
         _pendingScrollRatio = scrollRatio;
         _fileWatcher?.Dispose();
         _fileWatcher = null;
@@ -1399,6 +1403,87 @@ public partial class MainWindow : Window
 
     #endregion
 
+    #region Open in Browser
+
+    // Open in Browser (feature 016): the document as rendered by the viewer,
+    // written to %TEMP%\MDViewer_Browser (never next to the document) and
+    // opened with the Windows default app for .html, like http links.
+
+    private void UpdateOpenInBrowser()
+    {
+        var enabled = _currentFilePath != null;
+        OpenInBrowserButton.IsEnabled = enabled;
+        OpenInBrowserMenuItem.IsEnabled = enabled;
+    }
+
+    private async void OpenInBrowser_Click(object sender, RoutedEventArgs e) => await OpenInBrowser();
+
+    private async Task OpenInBrowser()
+    {
+        if (_currentFilePath is not { } filePath) return;
+        var fileName = Path.GetFileName(filePath);
+
+        try
+        {
+            var markdown = await File.ReadAllTextAsync(filePath);
+            var mermaidPath = Path.Combine(_assetsFolder ?? Path.Combine(Path.GetTempPath(), "MDViewer_Assets"),
+                "mermaid.min.js");
+            var html = _renderService.RenderForBrowser(markdown, _themeService.IsDarkTheme, filePath, mermaidPath);
+
+            var exportFolder = Path.Combine(Path.GetTempPath(), BrowserExport.FolderName);
+            Directory.CreateDirectory(exportFolder);
+            var pagePath = BrowserExport.PathFor(exportFolder, filePath);
+            await File.WriteAllTextAsync(pagePath, html, new UTF8Encoding(false));
+
+            Process.Start(new ProcessStartInfo(pagePath) { UseShellExecute = true });
+            StatusLabel.Text = $"Opened in browser — {fileName}";
+        }
+        catch (Exception ex)
+        {
+            StatusLabel.Text = "Could not open in browser";
+            MessageBox.Show(this, $"Failed to open {fileName} in the browser:\n{ex.Message}",
+                "MDViewer - Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    #endregion
+
+    #region Fullscreen
+
+    // Fullscreen (feature 015): only the menu and the toolbar stay; the tree
+    // panel, the splitter and the status bar are hidden. Layout only: the
+    // window keeps its size and state, and the mode is not remembered.
+
+    private void Fullscreen_Click(object sender, RoutedEventArgs e) =>
+        SetFullscreen(!_fullscreen.IsActive);
+
+    private void SetFullscreen(bool on)
+    {
+        if (on)
+        {
+            if (!_fullscreen.Enter(TreeColumn.ActualWidth)) return;
+            TreePanel.Visibility = Visibility.Collapsed;
+            TreeSplitter.Visibility = Visibility.Collapsed;
+            StatusBar.Visibility = Visibility.Collapsed;
+            TreeColumn.MinWidth = 0;
+            TreeColumn.Width = new GridLength(0);
+        }
+        else
+        {
+            if (_fullscreen.Exit() is not double width) return;
+            TreePanel.Visibility = Visibility.Visible;
+            TreeSplitter.Visibility = Visibility.Visible;
+            StatusBar.Visibility = Visibility.Visible;
+            ApplyTreeLayout(_treeOnLeft, width);
+        }
+
+        FullscreenMenuItem.IsChecked = on;
+        FullscreenButton.ToolTip = on ? "Exit fullscreen (F11 or Esc)" : "Fullscreen (F11)";
+        System.Windows.Automation.AutomationProperties.SetName(FullscreenButton, on ? "Exit fullscreen" : "Fullscreen");
+    }
+
+    #endregion
+
     #region Zoom
 
     private void UpdateZoom()
@@ -1506,6 +1591,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.B)
+        {
+            _ = OpenInBrowser();
+            e.Handled = true;
+            return;
+        }
+
         if (Keyboard.Modifiers == ModifierKeys.Alt && e.SystemKey == Key.Left)
         {
             NavigateBack_Click(sender, e);
@@ -1523,6 +1615,21 @@ public partial class MainWindow : Window
         if (Keyboard.Modifiers == ModifierKeys.None && e.Key == Key.F5)
         {
             _ = RefreshFolderTree();
+            e.Handled = true;
+            return;
+        }
+
+        if (Keyboard.Modifiers == ModifierKeys.None && e.Key == Key.F11)
+        {
+            SetFullscreen(!_fullscreen.IsActive);
+            e.Handled = true;
+            return;
+        }
+
+        // Esc only leaves the mode; outside it the key is left alone.
+        if (Keyboard.Modifiers == ModifierKeys.None && e.Key == Key.Escape && _fullscreen.IsActive)
+        {
+            SetFullscreen(false);
             e.Handled = true;
             return;
         }
@@ -1554,8 +1661,10 @@ public partial class MainWindow : Window
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
-        if (TreeColumn.ActualWidth > 0)
-            SettingsService.TreeWidth = TreeColumn.ActualWidth;
+        // In fullscreen the column is hidden (0): store the width from before.
+        var treeWidth = _fullscreen.WidthToPersist(TreeColumn.ActualWidth);
+        if (treeWidth > 0)
+            SettingsService.TreeWidth = treeWidth;
 
         _fileWatcher?.Dispose();
         _debounceTimer?.Dispose();

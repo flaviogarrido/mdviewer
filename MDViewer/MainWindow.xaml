@@ -122,6 +122,15 @@
                           Click="OpenFolder_Click" x:Name="OpenFolderMenuItem"/>
                 <MenuItem Header="_Open File…" InputGestureText="Ctrl+Shift+O"
                           Click="OpenFile_Click" x:Name="OpenFileMenuItem"/>
+                <Separator/>
+                <!-- Open in Browser (feature 016): the rendered document in the default browser. -->
+                <MenuItem Header="Open in _Browser" InputGestureText="Ctrl+Shift+B"
+                          Click="OpenInBrowser_Click" x:Name="OpenInBrowserMenuItem" IsEnabled="False"/>
+            </MenuItem>
+            <MenuItem Header="_View" x:Name="ViewMenu">
+                <!-- Fullscreen (feature 015): the document takes the whole width. -->
+                <MenuItem Header="_Fullscreen" InputGestureText="F11" IsCheckable="True"
+                          Click="Fullscreen_Click" x:Name="FullscreenMenuItem"/>
             </MenuItem>
         </Menu>
 
@@ -165,6 +174,16 @@
                             </ContextMenu>
                         </Button.ContextMenu>
                     </Button>
+                    <Button Style="{StaticResource ToolbarButton}" Click="Fullscreen_Click"
+                            ToolTip="Fullscreen (F11)" x:Name="FullscreenButton"
+                            AutomationProperties.Name="Fullscreen">
+                        <TextBlock Text="⛶ Fullscreen" FontSize="13"/>
+                    </Button>
+                    <Button Style="{StaticResource ToolbarButton}" Click="OpenInBrowser_Click"
+                            ToolTip="Open in the default browser (Ctrl+Shift+B)" x:Name="OpenInBrowserButton"
+                            AutomationProperties.Name="Open in browser" IsEnabled="False">
+                        <TextBlock Text="🌐 Browser" FontSize="13"/>
+                    </Button>
                     <Rectangle Width="1" Fill="{DynamicResource ChromeBorder}" Margin="8,2"/>
                 </StackPanel>
 
@@ -206,7 +225,7 @@
             <wv2:WebView2 Grid.Column="0" x:Name="WebView"
                           DefaultBackgroundColor="Transparent"/>
 
-            <GridSplitter Grid.Column="1" Width="5"
+            <GridSplitter Grid.Column="1" Width="5" x:Name="TreeSplitter"
                           HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                           ResizeDirection="Columns" ResizeBehavior="PreviousAndNext"
                           Background="{DynamicResource SplitterBackground}"/>
@@ -370,7 +389,7 @@
         </Grid>
 
         <!-- Status Bar -->
-        <Border Grid.Row="3" BorderBrush="{DynamicResource ChromeBorder}" BorderThickness="0,1,0,0" Padding="8,3"
+        <Border Grid.Row="3" x:Name="StatusBar" BorderBrush="{DynamicResource ChromeBorder}" BorderThickness="0,1,0,0" Padding="8,3"
                 Background="{DynamicResource ChromeBackground}">
             <TextBlock x:Name="StatusLabel" Text="Ready"
                        FontSize="11" Foreground="{DynamicResource SecondaryText}"/>
